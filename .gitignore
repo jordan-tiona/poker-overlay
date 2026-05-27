@@ -1,0 +1,20 @@
+node_modules/
+out/
+dist/
+
+# electron-builder output
+release/
+
+# env / local config
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.suo
+*.user
