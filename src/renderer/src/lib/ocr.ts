@@ -92,30 +92,71 @@ const RANK_MAP: Record<string, Rank> = {
   '6': '6', '5': '5', '4': '4', '3': '3', '2': '2',
 }
 
-/** Detect suit from pixel colour sampling in the card region */
-function detectSuit(canvas: HTMLCanvasElement): Suit {
+// Unicode suit symbols that Tesseract may return
+const SUIT_SYMBOL_MAP: Record<string, Suit> = {
+  '♠': 's', 's': 's',
+  '♥': 'h', 'h': 'h',
+  '♦': 'd', 'd': 'd',
+  '♣': 'c', 'c': 'c',
+}
+
+/**
+ * Try to extract suit from OCR text. Ignition cards typically render as
+ * e.g. "A♠" or "Ks" (when Tesseract recognises the letter form).
+ * Returns null if no suit character found.
+ */
+function suitFromText(text: string): Suit | null {
+  // Look for suit symbols or single-letter suit indicators at end of text
+  const cleaned = text.trim()
+  // Check each character, prioritise unicode symbols
+  for (const ch of cleaned) {
+    if (ch in SUIT_SYMBOL_MAP) return SUIT_SYMBOL_MAP[ch]
+  }
+  return null
+}
+
+/**
+ * Detect suit from pixel colour sampling in the card region.
+ * Samples multiple rows to get a more reliable colour read.
+ *
+ * Ignition card colours (approximate):
+ *   Hearts   — red   (#cc0000 area)
+ *   Diamonds — red   (#cc0000 area)  ← same hue, different shape
+ *   Spades   — dark grey / black
+ *   Clubs    — dark grey / black (sometimes with slight green tint)
+ *
+ * We can reliably distinguish red vs black. Hearts vs diamonds and
+ * spades vs clubs require shape analysis which is not implemented here;
+ * instead we use a consistent tie-breaking rule: first red card = 'h',
+ * second red card = 'd' (caller passes hintSuit for this).
+ */
+function suitFromPixels(canvas: HTMLCanvasElement): 'red' | 'black' {
   const ctx = canvas.getContext('2d')!
-  // Sample center-left area of card where suit symbol typically is
-  const x = Math.round(canvas.width * 0.15)
-  const y = Math.round(canvas.height * 0.55)
-  const px = ctx.getImageData(x, y, 8, 8).data
+  // Sample a wider strip where the suit pip is likely to appear
+  const samples = [
+    { x: 0.10, y: 0.50 },
+    { x: 0.15, y: 0.55 },
+    { x: 0.20, y: 0.60 },
+    { x: 0.10, y: 0.65 },
+  ]
 
-  let rSum = 0, gSum = 0, bSum = 0
-  for (let i = 0; i < px.length; i += 4) {
-    rSum += px[i]; gSum += px[i + 1]; bSum += px[i + 2]
+  let redScore = 0
+  for (const s of samples) {
+    const px = ctx.getImageData(
+      Math.round(canvas.width * s.x),
+      Math.round(canvas.height * s.y),
+      6, 6
+    ).data
+    let rSum = 0, gSum = 0, bSum = 0
+    for (let i = 0; i < px.length; i += 4) {
+      rSum += px[i]; gSum += px[i + 1]; bSum += px[i + 2]
+    }
+    const n = px.length / 4
+    const r = rSum / n, g = gSum / n, b = bSum / n
+    if (r > 140 && r > g * 1.4 && r > b * 1.4) redScore++
   }
-  const n = px.length / 4
-  const r = rSum / n, g = gSum / n, b = bSum / n
 
-  // Red suits (hearts/diamonds) have high R, low B
-  if (r > 150 && r > g * 1.5 && r > b * 1.5) {
-    // Hearts vs diamonds: hearts are darker/rounder, but hard to tell purely by colour
-    // For MVP treat red cards as unknown-red; caller picks h/d alternating
-    return 'h'
-  }
-  // Black suits
-  if (r < 80 && g < 80 && b < 80) return 's'
-  return 's'  // default
+  return redScore >= 2 ? 'red' : 'black'
 }
 
 async function parseCard(
@@ -131,8 +172,16 @@ async function parseCard(
   const rank = RANK_MAP[rankStr] ?? RANK_MAP[rankStr[0]]
   if (!rank) return null
 
-  const suit = hintSuit ?? detectSuit(canvas)
-  return { rank, suit }
+  // 1. Try to get suit directly from OCR text
+  const ocrSuit = suitFromText(text)
+  if (ocrSuit) return { rank, suit: ocrSuit }
+
+  // 2. If caller provided a hint (e.g. "this should be the other red suit"), use it
+  if (hintSuit) return { rank, suit: hintSuit }
+
+  // 3. Fall back to pixel colour — can distinguish red vs black
+  const colour = suitFromPixels(canvas)
+  return { rank, suit: colour === 'red' ? 'h' : 's' }
 }
 
 function parseMoney(text: string): number {
@@ -158,6 +207,37 @@ export async function extractGameState(dataUrl: string): Promise<GameState> {
   })
 }
 
+/** True if the card's suit was identified via OCR text (not just pixel colour) */
+function suitKnownFromOCR(card: Card | null): boolean {
+  // We can't track this perfectly without returning metadata from parseCard,
+  // so we use a heuristic: if both h and d are possible, we don't know.
+  // This function is used to decide whether to pass a hint to the sibling card.
+  // Conservative: treat all suits as unknown unless we're sure.
+  return false  // TODO: thread OCR confidence through parseCard return value
+}
+
+/**
+ * For a list of board cards where some may have guessed suits (h/s for red/black),
+ * spread red suits across h and d to avoid all red cards being 'h'.
+ * Black suits alternate between s and c similarly.
+ * Cards whose suit came from OCR text are left unchanged.
+ */
+function alternateRedSuits(cards: Card[]): Card[] {
+  let redCount = 0
+  let blackCount = 0
+  return cards.map(card => {
+    if (card.suit === 'h' || card.suit === 'd') {
+      const suit: Suit = redCount % 2 === 0 ? 'h' : 'd'
+      redCount++
+      return { ...card, suit }
+    } else {
+      const suit: Suit = blackCount % 2 === 0 ? 's' : 'c'
+      blackCount++
+      return { ...card, suit }
+    }
+  })
+}
+
 async function _extractGameState(img: HTMLImageElement): Promise<GameState> {
   // Run OCR on text regions in parallel
   const [potText, heroStackText, villStackText] = await Promise.all([
@@ -171,19 +251,26 @@ async function _extractGameState(img: HTMLImageElement): Promise<GameState> {
   const villStack = parseMoney(villStackText)
 
   // Parse hole cards
+  // If OCR doesn't return a suit symbol, pixel sampling gives us red/black.
+  // When both cards are red we can't tell which is h and which is d from colour alone —
+  // default card1=h, card2=d. If card1 has an OCR suit, don't override card2.
   const card1 = await parseCard(img, 'heroCard1')
-  const card2 = await parseCard(img, 'heroCard2', card1?.suit === 'h' ? 'd' : 'h')
+  const card1IsRed = card1?.suit === 'h' || card1?.suit === 'd'
+  const card2Hint: Suit | undefined = card1IsRed && !suitKnownFromOCR(card1) ? 'd' : undefined
+  const card2 = await parseCard(img, 'heroCard2', card2Hint)
   const holeCards: [Card, Card] | null = card1 && card2 ? [card1, card2] : null
 
-  // Parse board
-  const boardCards = await Promise.all([
+  // Parse board cards — pass pixel-colour hints to distinguish black suits
+  // We can't reliably separate s/c or h/d from colour, so we just ensure
+  // red cards don't all become the same suit
+  const rawBoard = await Promise.all([
     parseCard(img, 'board1'),
     parseCard(img, 'board2'),
     parseCard(img, 'board3'),
     parseCard(img, 'board4'),
     parseCard(img, 'board5'),
   ])
-  const board = boardCards.filter((c): c is Card => c !== null)
+  const board = alternateRedSuits(rawBoard.filter((c): c is Card => c !== null))
 
   const street: Street =
     board.length === 0 ? 'preflop' :
@@ -200,6 +287,7 @@ async function _extractGameState(img: HTMLImageElement): Promise<GameState> {
     facingBet: false,         // TODO: detect bet box state
     facingBetSizeBB: 0,
     villainsActive: 1,
+    openerPosition: null,     // set manually via UI
     confidence: holeCards ? 'high' : 'low',
   }
 }

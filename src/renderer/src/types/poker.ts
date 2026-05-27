@@ -41,6 +41,10 @@ export interface GameState {
   facingBetSizeBB: number
   villainsActive: number    // how many opponents remaining
 
+  // When hero is BB and facing an open, which position opened?
+  // Used for BB defend chart lookup.
+  openerPosition: Position | null
+
   // OCR confidence / detection status
   confidence: 'high' | 'low' | 'manual'
 }
@@ -55,5 +59,6 @@ export const EMPTY_GAME_STATE: GameState = {
   facingBet: false,
   facingBetSizeBB: 0,
   villainsActive: 1,
+  openerPosition: null,
   confidence: 'manual',
 }

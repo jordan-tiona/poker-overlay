@@ -98,8 +98,11 @@ interface ControlsProps {
 }
 
 const POSITIONS = ['UTG', 'UTG+1', 'UTG+2', 'LJ', 'HJ', 'CO', 'BTN', 'SB', 'BB'] as const
+const OPENER_POSITIONS = ['UTG', 'UTG+1', 'UTG+2', 'LJ', 'HJ', 'CO', 'BTN', 'SB'] as const
 
 function ManualControls({ gameState, onManualEdit }: ControlsProps) {
+  const isBB = gameState.heroPosition === 'BB'
+
   return (
     <div style={styles.controls}>
       <label style={styles.controlLabel}>Position</label>
@@ -112,24 +115,44 @@ function ManualControls({ gameState, onManualEdit }: ControlsProps) {
         {POSITIONS.map(p => <option key={p} value={p}>{p}</option>)}
       </select>
 
-      <label style={styles.controlLabel}>Facing bet?</label>
-      <input
-        type="checkbox"
-        checked={gameState.facingBet}
-        onChange={e => onManualEdit({ facingBet: e.target.checked })}
-        style={{ cursor: 'pointer' }}
-      />
-      {gameState.facingBet && (
+      {/* BB sees "Opener" instead of generic "Facing bet" */}
+      {isBB ? (
         <>
-          <label style={styles.controlLabel}>Size (BB)</label>
+          <label style={styles.controlLabel}>Opener</label>
+          <select
+            style={styles.select}
+            value={gameState.openerPosition ?? ''}
+            onChange={e => onManualEdit({
+              openerPosition: (e.target.value as GameState['openerPosition']) || null,
+              facingBet: e.target.value !== '',
+            })}
+          >
+            <option value="">none</option>
+            {OPENER_POSITIONS.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </>
+      ) : (
+        <>
+          <label style={styles.controlLabel}>Facing bet?</label>
           <input
-            type="number"
-            style={styles.numberInput}
-            value={gameState.facingBetSizeBB}
-            min={0}
-            step={0.5}
-            onChange={e => onManualEdit({ facingBetSizeBB: parseFloat(e.target.value) || 0 })}
+            type="checkbox"
+            checked={gameState.facingBet}
+            onChange={e => onManualEdit({ facingBet: e.target.checked })}
+            style={{ cursor: 'pointer' }}
           />
+          {gameState.facingBet && (
+            <>
+              <label style={styles.controlLabel}>Size (BB)</label>
+              <input
+                type="number"
+                style={styles.numberInput}
+                value={gameState.facingBetSizeBB}
+                min={0}
+                step={0.5}
+                onChange={e => onManualEdit({ facingBetSizeBB: parseFloat(e.target.value) || 0 })}
+              />
+            </>
+          )}
         </>
       )}
     </div>

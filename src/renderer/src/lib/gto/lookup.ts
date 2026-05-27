@@ -1,5 +1,5 @@
 import type { Card, GameState, GTOSuggestion, ActionOption } from '../../types/poker'
-import { RFI, VS_3BET, type PreflopSpot } from './charts/preflop'
+import { RFI, VS_3BET, BB_DEFEND, type PreflopSpot } from './charts/preflop'
 
 // ── Hand key normalization ───────────────────────────────────────────────────
 
@@ -36,42 +36,67 @@ export function lookupGTO(state: GameState): GTOSuggestion | null {
 }
 
 function lookupPreflop(state: GameState): GTOSuggestion | null {
-  const { holeCards, heroPosition, facingBet, facingBetSizeBB } = state
+  const { holeCards, heroPosition, facingBet, facingBetSizeBB, openerPosition } = state
   if (!holeCards || !heroPosition) return null
 
   const key = handKey(holeCards)
 
-  // Facing a 3-bet?
-  if (facingBet && facingBetSizeBB > 0) {
+  // BB defend — BB never RFIs, handle facing-open case
+  if (heroPosition === 'BB' && facingBet) {
+    return lookupBBDefend(key, openerPosition)
+  }
+
+  // Any position facing a re-raise (3-bet after we opened)
+  if (facingBet && facingBetSizeBB > 0 && heroPosition !== 'BB') {
     const chart = VS_3BET[heroPosition]
     if (chart?.[key]) {
       return spotToSuggestion(chart[key], key)
     }
-    // Default fold if hand not in chart
+    // No chart entry = fold (hand not in our vs-3bet calling/4betting range)
     return defaultFold()
   }
 
   // RFI
+  if (heroPosition === 'BB') {
+    // BB not facing a bet and no open yet — shouldn't normally happen preflop;
+    // surface a "waiting" message rather than null
+    return null
+  }
+
   const chart = RFI[heroPosition]
-  if (!chart) return null  // position not charted yet (BB, LJ, UTG+1, etc.)
+  if (!chart) return null  // position genuinely not charted
 
   const spot = chart[key]
   if (!spot) {
-    // Not in chart = fold
     return defaultFold()
   }
 
   return spotToSuggestion(spot, key)
 }
 
+function lookupBBDefend(key: string, openerPosition: string | null): GTOSuggestion | null {
+  if (!openerPosition) return null  // need to know who opened
+
+  const chart = BB_DEFEND[openerPosition]
+  if (!chart) {
+    // Position not charted — default: fold to tight ranges (UTG+1/UTG+2/LJ)
+    // In practice those are close to the UTG chart
+    const fallback = BB_DEFEND['UTG']
+    const spot = fallback?.[key]
+    return spot ? spotToSuggestion(spot, key) : defaultFold()
+  }
+
+  const spot = chart[key]
+  return spot ? spotToSuggestion(spot, key) : defaultFold()
+}
+
 function spotToSuggestion(spot: PreflopSpot, key: string): GTOSuggestion {
-  const actions: ActionOption[] = [
-    {
-      action: spot.primary.action,
-      sizingBB: spot.primary.sizingBB,
-      frequency: spot.primary.frequency,
-    },
-  ]
+  const primary: ActionOption = {
+    action: spot.primary.action,
+    frequency: spot.primary.frequency,
+    ...(spot.primary.sizingBB !== undefined ? { sizingBB: spot.primary.sizingBB } : {}),
+  }
+  const actions: ActionOption[] = [primary]
 
   if (spot.secondary) {
     actions.push({
@@ -80,13 +105,14 @@ function spotToSuggestion(spot: PreflopSpot, key: string): GTOSuggestion {
     })
   }
 
-  const primary = actions[0]
-  const isPure = primary.frequency >= 0.95
+  const primaryAction = actions[0]
+  const isPure = primaryAction.frequency >= 0.95
+  void isPure  // used in explanation building; suppressed for now
 
   return {
     actions,
-    primaryAction: primary.action,
-    primaryFrequency: primary.frequency,
+    primaryAction: primaryAction.action,
+    primaryFrequency: primaryAction.frequency,
     // explanation is filled in by Ollama — start empty
     explanation: '',
   }
