@@ -77,15 +77,15 @@ const DEALER_CHIP_SEATS_6MAX: Region[] = [
 //   3 = upper-left             8 = bottom-right
 //   4 = top-left
 const DEALER_CHIP_SEATS_9MAX: Region[] = [
-  { x: 0.456, y: 0.748, w: 0.045, h: 0.032 },  // 0 hero
-  { x: 0.305, y: 0.645, w: 0.045, h: 0.032 },  // 1 bottom-left  (calibrated from screenshot)
-  { x: 0.185, y: 0.510, w: 0.045, h: 0.032 },  // 2 left
-  { x: 0.175, y: 0.335, w: 0.045, h: 0.032 },  // 3 upper-left
-  { x: 0.360, y: 0.250, w: 0.045, h: 0.032 },  // 4 top-left
-  { x: 0.520, y: 0.250, w: 0.045, h: 0.032 },  // 5 top-right
-  { x: 0.700, y: 0.335, w: 0.045, h: 0.032 },  // 6 right
-  { x: 0.700, y: 0.510, w: 0.045, h: 0.032 },  // 7 lower-right
-  { x: 0.560, y: 0.645, w: 0.045, h: 0.032 },  // 8 bottom-right
+  { x: 0.440, y: 0.720, w: 0.055, h: 0.040 },  // 0 hero
+  { x: 0.345, y: 0.620, w: 0.055, h: 0.040 },  // 1 bottom-left  (seat 7 area, both screenshots)
+  { x: 0.180, y: 0.490, w: 0.055, h: 0.040 },  // 2 left
+  { x: 0.165, y: 0.315, w: 0.055, h: 0.040 },  // 3 upper-left
+  { x: 0.350, y: 0.235, w: 0.055, h: 0.040 },  // 4 top-left
+  { x: 0.510, y: 0.235, w: 0.055, h: 0.040 },  // 5 top-right
+  { x: 0.685, y: 0.315, w: 0.055, h: 0.040 },  // 6 right
+  { x: 0.685, y: 0.490, w: 0.055, h: 0.040 },  // 7 lower-right
+  { x: 0.540, y: 0.620, w: 0.055, h: 0.040 },  // 8 bottom-right
 ]
 
 // Seat index → hero position (D is X seats clockwise from hero)
@@ -288,10 +288,14 @@ function findDealerChipSeat(
     let chipPixels = 0
     for (let p = 0; p < data.length; p += 4) {
       const r = data[p], g = data[p + 1], b = data[p + 2]
-      // Bright against dark-teal felt: gold (high R, medium G, low B)
-      //   OR silver/grey (all channels high)
+      const sum = r + g + b
+      const spread = Math.max(r, g, b) - Math.min(r, g, b)
+      // Gold chip: high R, moderate G, low B
       const isGold = r > 160 && g > r * 0.55 && b < r * 0.60
-      const isSilver = (r + g + b) > 420 && r > 100
+      // Silver/grey chip: moderate brightness (not white text), channels roughly equal.
+      // Upper bound (sum < 660) rejects pure-white text like "FOLD" / "CHECK" banners.
+      // spread < 50 rejects coloured seat-number chips.
+      const isSilver = sum > 380 && sum < 660 && spread < 50 && r > 100
       if (isGold || isSilver) chipPixels++
     }
 
