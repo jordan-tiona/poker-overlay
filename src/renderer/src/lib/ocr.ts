@@ -395,7 +395,15 @@ async function _extractGameState(img: HTMLImageElement): Promise<GameState> {
   const mark = (label: string) => {
     if (devPerf()) console.log(`[ocr perf] ${label}: ${(performance.now() - t0).toFixed(0)}ms`)
   }
-  console.log(`[ocr] thumbnail: ${img.naturalWidth}x${img.naturalHeight}`)
+  // Sample a pixel from the centre of the image to verify it has real content.
+  // The poker table felt is dark teal, so expect something like RGB(20,70,70).
+  // All-zeros means the capture returned a black frame.
+  const sampleCanvas = document.createElement('canvas')
+  sampleCanvas.width = 1; sampleCanvas.height = 1
+  const sampleCtx = sampleCanvas.getContext('2d')!
+  sampleCtx.drawImage(img, Math.round(img.naturalWidth * 0.5), Math.round(img.naturalHeight * 0.5), 1, 1, 0, 0, 1, 1)
+  const [sr, sg, sb] = sampleCtx.getImageData(0, 0, 1, 1).data
+  console.log(`[ocr] thumbnail: ${img.naturalWidth}x${img.naturalHeight} centre-pixel: RGB(${sr},${sg},${sb})`)
 
   // Text OCR runs on a single Tesseract worker — despite Promise.all the
   // calls are serialized internally. Each recognize() call takes ~200–500 ms.

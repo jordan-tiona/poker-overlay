@@ -83,9 +83,11 @@ ipcMain.handle('capture-ignition', async () => {
     /ignition|poker|hold.?em/i.test(s.name)
   )
 
+  console.log('[capture] sources:', sources.map(s => `${s.id.slice(0,10)} "${s.name}" ${s.thumbnail.getSize().width}x${s.thumbnail.getSize().height}`).join(' | '))
+
   if (ignitionWindow) {
     const { width, height } = ignitionWindow.thumbnail.getSize()
-    console.log(`[capture] Ignition window thumbnail: ${width}x${height}`)
+    console.log(`[capture] Using window "${ignitionWindow.name}" ${width}x${height}`)
     if (width > 200 && height > 200) {
       return { dataUrl: ignitionWindow.thumbnail.toDataURL() }
     }
