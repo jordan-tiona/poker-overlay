@@ -1,11 +1,11 @@
-import { app, BrowserWindow, ipcMain, desktopCapturer, screen as electronScreen, globalShortcut } from 'electron'
+import { app, BrowserWindow, ipcMain, desktopCapturer, screen, globalShortcut } from 'electron'
 import { join } from 'path'
 
 let overlayWindow: BrowserWindow | null = null
 let isClickThrough = true
 
 function createOverlayWindow(): void {
-  const { width, height } = electronScreen.getPrimaryDisplay().workAreaSize
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize
 
   overlayWindow = new BrowserWindow({
     width,
@@ -105,31 +105,17 @@ ipcMain.handle('capture-ignition', async () => {
   }
 
   // Fall back to screen capture — always bypasses GPU compositing.
-  // Prefer the screen that the overlay is NOT on: the overlay and game
-  // are typically on different monitors, and we know the overlay's display.
-  const overlayBounds = overlayWindow?.getBounds() ?? { x: 0, y: 0 }
-  const overlayDisplay = electronScreen.getDisplayNearestPoint(overlayBounds)
-
+  // The game and overlay are on the same screen; just pick the first
+  // non-black screen that has content.
   const screenCandidates = sources
     .filter(s => s.id.startsWith('screen:') && hasContent(s))
-    .map(s => {
-      // Match screen source index to display order so we can deprioritise
-      // the overlay's screen. Source IDs are "screen:N:0" where N is index.
-      const idx = parseInt(s.id.split(':')[1])
-      const displays = electronScreen.getAllDisplays()
-      const display = displays[idx]
-      const isOverlayScreen = display?.id === overlayDisplay.id
-      const { width, height } = s.thumbnail.getSize()
-      const bmp = s.thumbnail.toBitmap()
-      const ci = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4
-      const brightness = bmp[ci] + bmp[ci + 1] + bmp[ci + 2]
-      return { s, brightness, isOverlayScreen }
-    })
-    // Game screen first; break ties by darkest (poker table is very dark)
-    .sort((a, b) => Number(a.isOverlayScreen) - Number(b.isOverlayScreen) || a.brightness - b.brightness)
 
-  for (const { s, brightness, isOverlayScreen } of screenCandidates) {
-    console.log(`[capture] screen "${s.name}" brightness=${brightness} overlayScreen=${isOverlayScreen}`)
+  for (const s of screenCandidates) {
+    const { width, height } = s.thumbnail.getSize()
+    const bmp = s.thumbnail.toBitmap()
+    const ci = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4
+    const brightness = bmp[ci] + bmp[ci + 1] + bmp[ci + 2]
+    console.log(`[capture] screen "${s.name}" centre-brightness=${brightness}`)
     return { dataUrl: s.thumbnail.toDataURL() }
   }
 
