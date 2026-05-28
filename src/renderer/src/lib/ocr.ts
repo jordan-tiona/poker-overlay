@@ -300,22 +300,24 @@ function findDealerChipSeat(
     const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height)
 
     let chipPixels = 0
+    let maxSum = 0
     for (let p = 0; p < data.length; p += 4) {
       const r = data[p], g = data[p + 1], b = data[p + 2]
       const sum = r + g + b
       const spread = Math.max(r, g, b) - Math.min(r, g, b)
+      if (sum > maxSum) maxSum = sum
       // Gold chip: high R, moderate G, low B
       const isGold = r > 160 && g > r * 0.55 && b < r * 0.60
-      // Silver/grey chip: moderate brightness (not white text), channels roughly equal.
-      // Upper bound (sum < 660) rejects pure-white text like "FOLD" / "CHECK" banners.
-      // spread < 50 rejects coloured seat-number chips.
-      const isSilver = sum > 380 && sum < 660 && spread < 50 && r > 100
+      // Silver/white chip: all channels bright and roughly equal.
+      // No upper bound — D chip may be near-white. spread < 55 rejects
+      // coloured seat chips; sum > 360 rejects dark table felt.
+      const isSilver = sum > 360 && spread < 55 && r > 90
       if (isGold || isSilver) chipPixels++
     }
 
     const pixelCount = data.length / 4
     const score = chipPixels / pixelCount
-    if (devLog) console.log(`[dealer] seat ${i} score=${score.toFixed(3)}`)
+    if (devLog) console.log(`[dealer] seat ${i} score=${score.toFixed(3)} maxSum=${maxSum}`)
 
     // ≥12% bright pixels = chip present (relaxed from 15% to improve recall)
     if (score > 0.12 && score > bestScore) {
