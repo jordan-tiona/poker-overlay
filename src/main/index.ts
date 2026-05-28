@@ -1,8 +1,10 @@
-import { app, BrowserWindow, ipcMain, desktopCapturer, screen, globalShortcut } from 'electron'
+import { app, BrowserWindow, ipcMain, desktopCapturer, screen, globalShortcut, nativeImage } from 'electron'
 import { join } from 'path'
+import { writeFileSync } from 'fs'
 
 let overlayWindow: BrowserWindow | null = null
 let isClickThrough = true
+let lastCaptureDataUrl: string | null = null
 
 function createOverlayWindow(): void {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize
@@ -50,6 +52,18 @@ function registerHotkeys(): void {
   // Open/close DevTools
   globalShortcut.register('CommandOrControl+Shift+I', () => {
     overlayWindow?.webContents.openDevTools({ mode: 'detach' })
+  })
+
+  // Save last captured thumbnail to Desktop for inspection
+  globalShortcut.register('CommandOrControl+Shift+D', () => {
+    if (!lastCaptureDataUrl) {
+      console.log('[capture] no thumbnail saved yet')
+      return
+    }
+    const img = nativeImage.createFromDataURL(lastCaptureDataUrl)
+    const dest = join(app.getPath('desktop'), 'gto-capture.png')
+    writeFileSync(dest, img.toPNG())
+    console.log(`[capture] thumbnail saved → ${dest}`)
   })
 
   // Quit
@@ -101,7 +115,8 @@ ipcMain.handle('capture-ignition', async () => {
   // Try window capture first — works if GPU compositing is accessible
   if (gameWindow && hasContent(gameWindow)) {
     console.log(`[capture] window (GPU ok): "${gameWindow.name}"`)
-    return { dataUrl: gameWindow.thumbnail.toDataURL(), windowHeight: gameWindowHeight }
+    lastCaptureDataUrl = gameWindow.thumbnail.toDataURL()
+    return { dataUrl: lastCaptureDataUrl, windowHeight: gameWindowHeight }
   }
 
   if (gameWindow) {
@@ -120,7 +135,8 @@ ipcMain.handle('capture-ignition', async () => {
     const ci = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4
     const brightness = bmp[ci] + bmp[ci + 1] + bmp[ci + 2]
     console.log(`[capture] screen "${s.name}" brightness=${brightness} windowHeight=${gameWindowHeight}`)
-    return { dataUrl: s.thumbnail.toDataURL(), windowHeight: gameWindowHeight }
+    lastCaptureDataUrl = s.thumbnail.toDataURL()
+    return { dataUrl: lastCaptureDataUrl, windowHeight: gameWindowHeight }
   }
 
   return { error: 'No usable capture source', sources: sources.map(s => s.name) }
