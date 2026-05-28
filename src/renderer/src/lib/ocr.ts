@@ -44,48 +44,64 @@ const REGIONS = {
   actionCall:  { x: 0.460, y: 0.905, w: 0.140, h: 0.040 },
 } satisfies Record<string, Region>
 
-// ── Dealer-button (D-chip) seat regions (1920×1080 reference) ────────────────
+// ── Dealer-button (D-chip) seat regions ──────────────────────────────────────
 //
-// Ignition's 6-max oval table has 6 seat positions. Hero is always at the
-// bottom-center (seat index 0). Seats are numbered clockwise:
-//   0 = hero (bottom)     3 = top-right
-//   1 = right             4 = top-left
-//   2 = upper-right       5 = left
+// The D chip is a silver/grey circle that moves each hand. Hero is always at
+// the bottom-center visually. Seat indices are clockwise from hero (0 = hero).
 //
-// The D chip is a small gold/yellow circle (~30 px) that moves between these
-// positions. We sample a ~40×30 px patch at each location and look for the
-// distinctive gold colour (high R+G, low B).
+// Two layouts supported — tried in parallel; the one with the stronger pixel
+// signal wins. Coordinates are fractions of the captured thumbnail size.
 //
-// ⚠️  These coordinates are approximate — run with DEV_LOG_DEALER=true in the
-//     console to print RGB samples from each region and tune x/y if needed.
-//
-const DEALER_CHIP_SEATS: Region[] = [
-  { x: 0.456, y: 0.748, w: 0.040, h: 0.028 },  // 0 hero
-  { x: 0.705, y: 0.660, w: 0.040, h: 0.028 },  // 1 right
-  { x: 0.785, y: 0.450, w: 0.040, h: 0.028 },  // 2 upper-right
-  { x: 0.636, y: 0.305, w: 0.040, h: 0.028 },  // 3 top-right
-  { x: 0.368, y: 0.305, w: 0.040, h: 0.028 },  // 4 top-left
-  { x: 0.222, y: 0.450, w: 0.040, h: 0.028 },  // 5 left
-  { x: 0.265, y: 0.660, w: 0.040, h: 0.028 },  // 6 lower-left (7-handed overflow)
+// ⚠️  These are calibrated from a 9-max $0.02/$0.05 screenshot. If the table
+//     geometry differs, set DEV_LOG_DEALER=true in the console to print the
+//     per-region brightness scores and tune x/y.
+
+// 6-max: 6 seats clockwise from hero
+//   0 = hero (bottom)    3 = top-right
+//   1 = right            4 = top-left
+//   2 = upper-right      5 = left
+const DEALER_CHIP_SEATS_6MAX: Region[] = [
+  { x: 0.456, y: 0.748, w: 0.045, h: 0.032 },  // 0 hero
+  { x: 0.705, y: 0.660, w: 0.045, h: 0.032 },  // 1 right
+  { x: 0.785, y: 0.450, w: 0.045, h: 0.032 },  // 2 upper-right
+  { x: 0.636, y: 0.305, w: 0.045, h: 0.032 },  // 3 top-right
+  { x: 0.368, y: 0.305, w: 0.045, h: 0.032 },  // 4 top-left
+  { x: 0.222, y: 0.450, w: 0.045, h: 0.032 },  // 5 left
+  { x: 0.265, y: 0.660, w: 0.045, h: 0.032 },  // 6 lower-left (7-handed overflow)
 ]
 
-// Seat index → hero's position for a 6-max table.
-// Clockwise seat layout means:
-//   D at seat 0 (hero)         → hero is BTN
-//   D at seat 1 (right)        → hero is CO   (BTN is one seat to the right)
-//   D at seat 2 (upper-right)  → hero is HJ
-//   D at seat 3 (top-right)    → hero is LJ
-//   D at seat 4 (top-left)     → hero is BB
-//   D at seat 5 (left)         → hero is SB
+// 9-max (full ring): 9 seats clockwise from hero
+//   0 = hero (bottom-center)   5 = top-right
+//   1 = bottom-left            6 = right
+//   2 = left                   7 = lower-right
+//   3 = upper-left             8 = bottom-right
+//   4 = top-left
+const DEALER_CHIP_SEATS_9MAX: Region[] = [
+  { x: 0.456, y: 0.748, w: 0.045, h: 0.032 },  // 0 hero
+  { x: 0.305, y: 0.645, w: 0.045, h: 0.032 },  // 1 bottom-left  (calibrated from screenshot)
+  { x: 0.185, y: 0.510, w: 0.045, h: 0.032 },  // 2 left
+  { x: 0.175, y: 0.335, w: 0.045, h: 0.032 },  // 3 upper-left
+  { x: 0.360, y: 0.250, w: 0.045, h: 0.032 },  // 4 top-left
+  { x: 0.520, y: 0.250, w: 0.045, h: 0.032 },  // 5 top-right
+  { x: 0.700, y: 0.335, w: 0.045, h: 0.032 },  // 6 right
+  { x: 0.700, y: 0.510, w: 0.045, h: 0.032 },  // 7 lower-right
+  { x: 0.560, y: 0.645, w: 0.045, h: 0.032 },  // 8 bottom-right
+]
+
+// Seat index → hero position (D is X seats clockwise from hero)
 const SEAT_TO_POSITION_6MAX: Array<Position | null> = [
   'BTN', 'CO', 'HJ', 'LJ', 'BB', 'SB', null,
 ]
+const SEAT_TO_POSITION_9MAX: Array<Position | null> = [
+  'BTN', 'CO', 'HJ', 'LJ', 'UTG+2', 'UTG+1', 'UTG', 'BB', 'SB',
+]
 
-// Seat positions that opened preflop (for BB defend chart), indexed same as above
-// If D is at seat X, the BTN is that seat, opener could be any of LJ/HJ/CO/BTN/SB
-// We default to guessing the BTN opened (most common single-raise spot)
+// Best-guess opener when hero is BB facing a raise
 const SEAT_TO_OPENER_6MAX: Array<Position | null> = [
   null, 'BTN', 'CO', 'HJ', 'CO', 'BTN', null,
+]
+const SEAT_TO_OPENER_9MAX: Array<Position | null> = [
+  null, 'BTN', 'CO', 'HJ', 'LJ', 'HJ', 'CO', 'BTN', null,
 ]
 
 // ── Tesseract worker (singleton) ─────────────────────────────────────────────
@@ -165,53 +181,46 @@ function suitFromText(text: string): Suit | null {
 }
 
 /**
- * Detect suit from pixel colour sampling in the card region.
- * Samples multiple rows to get a more reliable colour read.
+ * Detect suit from pixel colour sampling — supports 4-color decks.
  *
- * Ignition card colours (approximate):
- *   Hearts   — red   (#cc0000 area)
- *   Diamonds — red   (#cc0000 area)  ← same hue, different shape
- *   Spades   — dark grey / black
- *   Clubs    — dark grey / black (sometimes with slight green tint)
+ * Ignition 4-color deck:
+ *   Hearts   (♥) — red    (high R, low G, low B)
+ *   Diamonds (♦) — blue   (high B, dominates R)
+ *   Clubs    (♣) — green  (high G, dominates R and B)
+ *   Spades   (♠) — dark   (all channels low — fallback)
  *
- * We can reliably distinguish red vs black. Hearts vs diamonds and
- * spades vs clubs require shape analysis which is not implemented here;
- * instead we use a consistent tie-breaking rule: first red card = 'h',
- * second red card = 'd' (caller passes hintSuit for this).
+ * Samples the lower-left area of the card crop where the pip symbol sits.
  */
-function suitFromPixels(canvas: HTMLCanvasElement): 'red' | 'black' {
+function suitFromPixels(canvas: HTMLCanvasElement): Suit {
   const ctx = canvas.getContext('2d')!
-  // Sample a wider strip where the suit pip is likely to appear
   const samples = [
-    { x: 0.10, y: 0.50 },
-    { x: 0.15, y: 0.55 },
-    { x: 0.20, y: 0.60 },
-    { x: 0.10, y: 0.65 },
+    { x: 0.08, y: 0.48 }, { x: 0.13, y: 0.53 },
+    { x: 0.08, y: 0.58 }, { x: 0.18, y: 0.48 },
+    { x: 0.13, y: 0.63 }, { x: 0.20, y: 0.53 },
   ]
 
-  let redScore = 0
+  let rSum = 0, gSum = 0, bSum = 0, n = 0
   for (const s of samples) {
     const px = ctx.getImageData(
       Math.round(canvas.width * s.x),
       Math.round(canvas.height * s.y),
       6, 6
     ).data
-    let rSum = 0, gSum = 0, bSum = 0
     for (let i = 0; i < px.length; i += 4) {
-      rSum += px[i]; gSum += px[i + 1]; bSum += px[i + 2]
+      rSum += px[i]; gSum += px[i + 1]; bSum += px[i + 2]; n++
     }
-    const n = px.length / 4
-    const r = rSum / n, g = gSum / n, b = bSum / n
-    if (r > 140 && r > g * 1.4 && r > b * 1.4) redScore++
   }
+  const r = rSum / n, g = gSum / n, b = bSum / n
 
-  return redScore >= 2 ? 'red' : 'black'
+  if (b > r * 1.2 && b > g * 0.9)          return 'd'  // blue  → diamonds
+  if (g > r * 1.3 && g > b * 1.2)          return 'c'  // green → clubs
+  if (r > 130 && r > g * 1.35 && r > b * 1.35) return 'h'  // red   → hearts
+  return 's'                                             // dark  → spades
 }
 
 async function parseCard(
   img: HTMLImageElement,
-  regionKey: keyof typeof REGIONS,
-  hintSuit?: Suit
+  regionKey: keyof typeof REGIONS
 ): Promise<Card | null> {
   const canvas = cropRegion(img, REGIONS[regionKey])
   const text = await ocrCanvas(canvas)
@@ -221,16 +230,12 @@ async function parseCard(
   const rank = RANK_MAP[rankStr] ?? RANK_MAP[rankStr[0]]
   if (!rank) return null
 
-  // 1. Try to get suit directly from OCR text
+  // 1. Try suit from OCR text (most reliable when Tesseract reads the symbol)
   const ocrSuit = suitFromText(text)
   if (ocrSuit) return { rank, suit: ocrSuit }
 
-  // 2. If caller provided a hint (e.g. "this should be the other red suit"), use it
-  if (hintSuit) return { rank, suit: hintSuit }
-
-  // 3. Fall back to pixel colour — can distinguish red vs black
-  const colour = suitFromPixels(canvas)
-  return { rank, suit: colour === 'red' ? 'h' : 's' }
+  // 2. Fall back to 4-color pixel detection
+  return { rank, suit: suitFromPixels(canvas) }
 }
 
 function parseMoney(text: string): number {
@@ -256,89 +261,84 @@ export async function extractGameState(dataUrl: string): Promise<GameState> {
   })
 }
 
-/** True if the card's suit was identified via OCR text (not just pixel colour) */
-function suitKnownFromOCR(card: Card | null): boolean {
-  // We can't track this perfectly without returning metadata from parseCard,
-  // so we use a heuristic: if both h and d are possible, we don't know.
-  // This function is used to decide whether to pass a hint to the sibling card.
-  // Conservative: treat all suits as unknown unless we're sure.
-  return false  // TODO: thread OCR confidence through parseCard return value
-}
-
-/**
- * For a list of board cards where some may have guessed suits (h/s for red/black),
- * spread red suits across h and d to avoid all red cards being 'h'.
- * Black suits alternate between s and c similarly.
- * Cards whose suit came from OCR text are left unchanged.
- */
-function alternateRedSuits(cards: Card[]): Card[] {
-  let redCount = 0
-  let blackCount = 0
-  return cards.map(card => {
-    if (card.suit === 'h' || card.suit === 'd') {
-      const suit: Suit = redCount % 2 === 0 ? 'h' : 'd'
-      redCount++
-      return { ...card, suit }
-    } else {
-      const suit: Suit = blackCount % 2 === 0 ? 's' : 'c'
-      blackCount++
-      return { ...card, suit }
-    }
-  })
-}
 
 // ── Dealer button (D chip) detection ────────────────────────────────────────
 
 /**
- * Returns the index into DEALER_CHIP_SEATS of the seat that currently has the
- * dealer button, or -1 if none found.
+ * Returns the index and pixel score of the seat with the dealer button,
+ * or { seat: -1, score: 0 } if none found.
  *
- * Detection heuristic: the D chip in Ignition is gold/yellow — high red,
- * high green (≥ red × 0.65), low blue (< red × 0.55).  We sample several
- * pixels in each region and count how many match.
+ * Ignition's D chip is silver/grey against a dark teal table felt.
+ * We score each region by the fraction of pixels that are significantly
+ * brighter than the background (brightness sum > 420, R > 100).
  */
-function findDealerChipSeat(img: HTMLImageElement): number {
+function findDealerChipSeat(
+  img: HTMLImageElement,
+  seats: Region[]
+): { seat: number; score: number } {
   let bestSeat = -1
   let bestScore = 0
+  const devLog = typeof window !== 'undefined' && (window as unknown as Record<string, unknown>)['DEV_LOG_DEALER']
 
-  for (let i = 0; i < DEALER_CHIP_SEATS.length; i++) {
-    const canvas = cropRegion(img, DEALER_CHIP_SEATS[i])
+  for (let i = 0; i < seats.length; i++) {
+    const canvas = cropRegion(img, seats[i])
     const ctx = canvas.getContext('2d')!
     const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height)
 
-    let goldPixels = 0
+    let chipPixels = 0
     for (let p = 0; p < data.length; p += 4) {
       const r = data[p], g = data[p + 1], b = data[p + 2]
-      if (r > 160 && g > r * 0.60 && b < r * 0.55 && r > 100) goldPixels++
+      // Bright against dark-teal felt: gold (high R, medium G, low B)
+      //   OR silver/grey (all channels high)
+      const isGold = r > 160 && g > r * 0.55 && b < r * 0.60
+      const isSilver = (r + g + b) > 420 && r > 100
+      if (isGold || isSilver) chipPixels++
     }
 
-    // Need ≥15% of pixels to be gold to count as a chip
     const pixelCount = data.length / 4
-    const score = goldPixels / pixelCount
-    if (score > 0.15 && score > bestScore) {
+    const score = chipPixels / pixelCount
+    if (devLog) console.log(`[dealer] seat ${i} score=${score.toFixed(3)}`)
+
+    // ≥12% bright pixels = chip present (relaxed from 15% to improve recall)
+    if (score > 0.12 && score > bestScore) {
       bestScore = score
       bestSeat = i
     }
   }
 
-  return bestSeat
+  return { seat: bestSeat, score: bestScore }
 }
 
 /**
  * Infer hero's table position from which seat has the dealer button.
- * Also returns a best-guess openerPosition for BB-defend situations.
+ * Tries both 6-max and 9-max (full ring) layouts and uses whichever
+ * produces the stronger chip signal.
  */
 function inferPositionFromDealer(img: HTMLImageElement): {
   heroPosition: Position | null
   openerPosition: Position | null
 } {
-  const seat = findDealerChipSeat(img)
-  if (seat === -1) return { heroPosition: null, openerPosition: null }
+  const r6 = findDealerChipSeat(img, DEALER_CHIP_SEATS_6MAX)
+  const r9 = findDealerChipSeat(img, DEALER_CHIP_SEATS_9MAX)
 
-  const heroPosition = SEAT_TO_POSITION_6MAX[seat] ?? null
-  const openerPosition = heroPosition === 'BB'
-    ? (SEAT_TO_OPENER_6MAX[seat] ?? null)
-    : null
+  let seat: number
+  let posMap: Array<Position | null>
+  let openerMap: Array<Position | null>
+
+  if (r9.score >= r6.score && r9.seat !== -1) {
+    seat = r9.seat
+    posMap = SEAT_TO_POSITION_9MAX
+    openerMap = SEAT_TO_OPENER_9MAX
+  } else if (r6.seat !== -1) {
+    seat = r6.seat
+    posMap = SEAT_TO_POSITION_6MAX
+    openerMap = SEAT_TO_OPENER_6MAX
+  } else {
+    return { heroPosition: null, openerPosition: null }
+  }
+
+  const heroPosition = posMap[seat] ?? null
+  const openerPosition = heroPosition === 'BB' ? (openerMap[seat] ?? null) : null
 
   return { heroPosition, openerPosition }
 }
@@ -364,32 +364,45 @@ async function detectActionState(img: HTMLImageElement): Promise<{
   return { facingBet: true, facingBetSizeBB }
 }
 
-// ── Main OCR entry point (updated) ───────────────────────────────────────────
+// ── Main OCR entry point ─────────────────────────────────────────────────────
+
+const devPerf = () =>
+  typeof window !== 'undefined' &&
+  !!(window as unknown as Record<string, unknown>)['DEV_LOG_PERF']
 
 async function _extractGameState(img: HTMLImageElement): Promise<GameState> {
-  // Run OCR on text regions + action state + position in parallel
+  const t0 = performance.now()
+  const mark = (label: string) => {
+    if (devPerf()) console.log(`[ocr perf] ${label}: ${(performance.now() - t0).toFixed(0)}ms`)
+  }
+
+  // Text OCR runs on a single Tesseract worker — despite Promise.all the
+  // calls are serialized internally. Each recognize() call takes ~200–500 ms.
   const [potText, heroStackText, villStackText, actionState] = await Promise.all([
     ocrCanvas(cropRegion(img, REGIONS.pot)),
     ocrCanvas(cropRegion(img, REGIONS.heroStack)),
     ocrCanvas(cropRegion(img, REGIONS.villStack)),
     detectActionState(img),
   ])
+  mark('text+action OCR')
 
-  // Dealer-chip detection is pixel-only (sync-enough inside the same tick)
+  // Dealer chip is pure pixel math — fast
   const { heroPosition, openerPosition: detectedOpener } = inferPositionFromDealer(img)
+  mark('dealer chip')
 
   const potBB = parseMoney(potText)
   const heroStack = parseMoney(heroStackText)
   const villStack = parseMoney(villStackText)
 
-  // Parse hole cards
-  const card1 = await parseCard(img, 'heroCard1')
-  const card1IsRed = card1?.suit === 'h' || card1?.suit === 'd'
-  const card2Hint: Suit | undefined = card1IsRed && !suitKnownFromOCR(card1) ? 'd' : undefined
-  const card2 = await parseCard(img, 'heroCard2', card2Hint)
+  // Hero cards (sequential — card2 depended on card1 previously; now independent)
+  const [card1, card2] = await Promise.all([
+    parseCard(img, 'heroCard1'),
+    parseCard(img, 'heroCard2'),
+  ])
   const holeCards: [Card, Card] | null = card1 && card2 ? [card1, card2] : null
+  mark('hero cards')
 
-  // Parse board cards
+  // Board cards
   const rawBoard = await Promise.all([
     parseCard(img, 'board1'),
     parseCard(img, 'board2'),
@@ -397,16 +410,28 @@ async function _extractGameState(img: HTMLImageElement): Promise<GameState> {
     parseCard(img, 'board4'),
     parseCard(img, 'board5'),
   ])
-  const board = alternateRedSuits(rawBoard.filter((c): c is Card => c !== null))
+  const board = rawBoard.filter((c): c is Card => c !== null)
+  mark('board cards')
 
   const street: Street =
     board.length === 0 ? 'preflop' :
     board.length === 3 ? 'flop' :
     board.length === 4 ? 'turn' : 'river'
 
-  // For BB facing a bet, prefer the detected opener; otherwise null
   const openerPosition =
     heroPosition === 'BB' && actionState.facingBet ? detectedOpener : null
+
+  const confidence: 'high' | 'low' = holeCards && heroPosition ? 'high' : 'low'
+  const elapsed = (performance.now() - t0).toFixed(0)
+
+  const cardStr = (c: Card) => c.rank + c.suit
+  console.log(
+    `[ocr] ${elapsed}ms | pos=${heroPosition ?? '—'} ` +
+    `cards=${holeCards?.map(cardStr).join(',') ?? '—'} ` +
+    `board=${board.map(cardStr).join(',') || '—'} ` +
+    `pot=${potBB} facing=${actionState.facingBet ? actionState.facingBetSizeBB : 'no'} ` +
+    `conf=${confidence}`
+  )
 
   return {
     street,
@@ -419,6 +444,6 @@ async function _extractGameState(img: HTMLImageElement): Promise<GameState> {
     facingBetSizeBB: actionState.facingBetSizeBB,
     villainsActive: 1,
     openerPosition,
-    confidence: holeCards && heroPosition ? 'high' : holeCards ? 'low' : 'low',
+    confidence,
   }
 }
