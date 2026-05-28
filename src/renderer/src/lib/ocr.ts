@@ -85,21 +85,29 @@ const DEALER_CHIP_SEATS_6MAX: Region[] = [
 //   2 = left                   7 = lower-right
 //   3 = upper-left             8 = bottom-right
 //   4 = top-left
-// Regions are centred on the estimated D-chip position.
-// Ground truth: chip at seat 6 (1 clockwise from hero) measured at
-// pixel (558, 492) in the 1920×1032 window → centre fraction (0.291, 0.477).
-// All other positions derived from seat-chip locations using the same
-// 44% x / 29% y offset toward table centre (0.378, 0.331).
+// Regions centred on estimated D-chip positions (calibrated coords).
+// All y-values are in the calibrated space (multiply by yScale to get
+// the actual fraction in the screen-capture image).
+//
+// Calibration source: gto-capture.png (1920×1080 screen, window=1039px)
+//   ✓ pos 7 (lower-right): D chip measured at screen pixel (1060,441)
+//       → x_cal=1060/1920=0.552, y_cal=441/1039=0.424
+//   All others estimated at 15% of the vector from seat chip to table
+//   centre (0.378, 0.356 cal), confirmed seat chip positions from image.
+//
+// Positions that reliably cause false positives:
+//   pos 0: hero hole-card faces (white rectangles) → region raised above cards
+//   pos 5: orange active-player indicator for top-right seat → region raised
 const DEALER_CHIP_SEATS_9MAX: Region[] = [
-  { x: 0.333, y: 0.469, w: 0.055, h: 0.040 },  // 0 hero        centre≈(0.360,0.489)
-  { x: 0.264, y: 0.457, w: 0.055, h: 0.040 },  // 1 bottom-left centre≈(0.291,0.477) ✓measured
-  { x: 0.206, y: 0.388, w: 0.055, h: 0.040 },  // 2 left        centre≈(0.233,0.408)
-  { x: 0.204, y: 0.241, w: 0.055, h: 0.040 },  // 3 upper-left  centre≈(0.231,0.261)
-  { x: 0.305, y: 0.182, w: 0.055, h: 0.040 },  // 4 top-left    centre≈(0.332,0.202)
-  { x: 0.380, y: 0.182, w: 0.055, h: 0.040 },  // 5 top-right   centre≈(0.407,0.202)
-  { x: 0.458, y: 0.241, w: 0.055, h: 0.040 },  // 6 right       centre≈(0.485,0.261)
-  { x: 0.460, y: 0.388, w: 0.055, h: 0.040 },  // 7 lower-right centre≈(0.487,0.408)
-  { x: 0.401, y: 0.457, w: 0.055, h: 0.040 },  // 8 bottom-right centre≈(0.428,0.477)
+  { x: 0.316, y: 0.428, w: 0.065, h: 0.048 },  // 0 hero        (raised above hole cards)
+  { x: 0.220, y: 0.482, w: 0.065, h: 0.048 },  // 1 bottom-left
+  { x: 0.135, y: 0.400, w: 0.065, h: 0.048 },  // 2 left
+  { x: 0.116, y: 0.226, w: 0.065, h: 0.048 },  // 3 upper-left
+  { x: 0.280, y: 0.156, w: 0.065, h: 0.048 },  // 4 top-left
+  { x: 0.413, y: 0.143, w: 0.065, h: 0.048 },  // 5 top-right   (raised above action indicator)
+  { x: 0.544, y: 0.226, w: 0.065, h: 0.048 },  // 6 right
+  { x: 0.525, y: 0.404, w: 0.065, h: 0.048 },  // 7 lower-right ✓ measured (1060,441)
+  { x: 0.426, y: 0.482, w: 0.065, h: 0.048 },  // 8 bottom-right
 ]
 
 // Seat index → hero position (D is X seats clockwise from hero)
