@@ -34,7 +34,7 @@ export function useCapture(onStateChange: (state: GameState) => void) {
     setStatus('found')
     setErrorMsg(null)
 
-    const state = await extractGameState(result.dataUrl)
+    const state = await extractGameState(result.dataUrl, result.windowHeight ?? undefined)
 
     // Deduplicate — only fire callback if the key state changed
     const key = JSON.stringify({

@@ -137,22 +137,25 @@ async function getWorker() {
 
 // ── Canvas crop helper ───────────────────────────────────────────────────────
 
+// yScale corrects for screen capture being taller than the game window.
+// e.g. window=1039px captured on 1080px screen → yScale = 1039/1080 = 0.962
 function cropRegion(
   img: HTMLImageElement,
-  region: Region
+  region: Region,
+  yScale = 1.0
 ): HTMLCanvasElement {
   const canvas = document.createElement('canvas')
   const cw = Math.round(img.naturalWidth * region.w)
-  const ch = Math.round(img.naturalHeight * region.h)
+  const ch = Math.round(img.naturalHeight * region.h * yScale)
   canvas.width = cw
-  canvas.height = ch
+  canvas.height = Math.max(ch, 1)
   const ctx = canvas.getContext('2d')!
   ctx.drawImage(
     img,
     Math.round(img.naturalWidth * region.x),
-    Math.round(img.naturalHeight * region.y),
-    cw, ch,
-    0, 0, cw, ch
+    Math.round(img.naturalHeight * region.y * yScale),
+    cw, Math.max(ch, 1),
+    0, 0, cw, Math.max(ch, 1)
   )
   return canvas
 }
@@ -234,9 +237,10 @@ function suitFromPixels(canvas: HTMLCanvasElement): Suit {
 
 async function parseCard(
   img: HTMLImageElement,
-  regionKey: keyof typeof REGIONS
+  regionKey: keyof typeof REGIONS,
+  yScale = 1.0
 ): Promise<Card | null> {
-  const canvas = cropRegion(img, REGIONS[regionKey])
+  const canvas = cropRegion(img, REGIONS[regionKey], yScale)
   const text = await ocrCanvas(canvas)
 
   // Extract rank from OCR text (first 1–2 chars)
@@ -259,12 +263,12 @@ function parseMoney(text: string): number {
 
 // ── Main OCR entry point ─────────────────────────────────────────────────────
 
-export async function extractGameState(dataUrl: string): Promise<GameState> {
+export async function extractGameState(dataUrl: string, windowHeight?: number): Promise<GameState> {
   return new Promise((resolve) => {
     const img = new Image()
     img.onload = async () => {
       try {
-        const state = await _extractGameState(img)
+        const state = await _extractGameState(img, windowHeight)
         resolve(state)
       } catch {
         resolve({ ...EMPTY_GAME_STATE, confidence: 'low' })
@@ -369,16 +373,15 @@ function inferPositionFromDealer(img: HTMLImageElement): {
  * Reads the middle action button ("Call X.XX" / "Check").
  * Returns { facingBet, facingBetSizeBB }.
  */
-async function detectActionState(img: HTMLImageElement): Promise<{
+async function detectActionState(img: HTMLImageElement, yScale: number): Promise<{
   facingBet: boolean
   facingBetSizeBB: number
 }> {
-  const text = await ocrCanvas(cropRegion(img, REGIONS.actionCall))
+  const text = await ocrCanvas(cropRegion(img, REGIONS.actionCall, yScale))
   const lower = text.toLowerCase()
 
   if (!lower.includes('call')) return { facingBet: false, facingBetSizeBB: 0 }
 
-  // Extract the dollar/BB amount after "Call"
   const match = text.match(/call\s*\$?([\d.,]+)/i)
   const facingBetSizeBB = match ? parseMoney(match[1]) : 0
   return { facingBet: true, facingBetSizeBB }
@@ -390,32 +393,33 @@ const devPerf = () =>
   typeof window !== 'undefined' &&
   !!(window as unknown as Record<string, unknown>)['DEV_LOG_PERF']
 
-async function _extractGameState(img: HTMLImageElement): Promise<GameState> {
+async function _extractGameState(img: HTMLImageElement, windowHeight?: number): Promise<GameState> {
   const t0 = performance.now()
   const mark = (label: string) => {
     if (devPerf()) console.log(`[ocr perf] ${label}: ${(performance.now() - t0).toFixed(0)}ms`)
   }
-  // Sample a pixel from the centre of the image to verify it has real content.
-  // The poker table felt is dark teal, so expect something like RGB(20,70,70).
-  // All-zeros means the capture returned a black frame.
+
+  // When screen capture height > window height, y-coords need scaling.
+  // e.g. window=1039px on a 1080px screen → yScale = 1039/1080 = 0.962
+  const yScale = (windowHeight && windowHeight > 200 && windowHeight < img.naturalHeight)
+    ? windowHeight / img.naturalHeight
+    : 1.0
+
   const sampleCanvas = document.createElement('canvas')
   sampleCanvas.width = 1; sampleCanvas.height = 1
   const sampleCtx = sampleCanvas.getContext('2d')!
-  sampleCtx.drawImage(img, Math.round(img.naturalWidth * 0.5), Math.round(img.naturalHeight * 0.5), 1, 1, 0, 0, 1, 1)
+  sampleCtx.drawImage(img, Math.round(img.naturalWidth * 0.5), Math.round(img.naturalHeight * 0.5 * yScale), 1, 1, 0, 0, 1, 1)
   const [sr, sg, sb] = sampleCtx.getImageData(0, 0, 1, 1).data
-  console.log(`[ocr] thumbnail: ${img.naturalWidth}x${img.naturalHeight} centre-pixel: RGB(${sr},${sg},${sb})`)
+  console.log(`[ocr] thumbnail: ${img.naturalWidth}x${img.naturalHeight} yScale=${yScale.toFixed(3)} centre-pixel: RGB(${sr},${sg},${sb})`)
 
-  // Text OCR runs on a single Tesseract worker — despite Promise.all the
-  // calls are serialized internally. Each recognize() call takes ~200–500 ms.
   const [potText, heroStackText, villStackText, actionState] = await Promise.all([
-    ocrCanvas(cropRegion(img, REGIONS.pot)),
-    ocrCanvas(cropRegion(img, REGIONS.heroStack)),
-    ocrCanvas(cropRegion(img, REGIONS.villStack)),
-    detectActionState(img),
+    ocrCanvas(cropRegion(img, REGIONS.pot, yScale)),
+    ocrCanvas(cropRegion(img, REGIONS.heroStack, yScale)),
+    ocrCanvas(cropRegion(img, REGIONS.villStack, yScale)),
+    detectActionState(img, yScale),
   ])
   mark('text+action OCR')
 
-  // Dealer chip is pure pixel math — fast
   const { heroPosition, openerPosition: detectedOpener } = inferPositionFromDealer(img)
   mark('dealer chip')
 
@@ -423,21 +427,19 @@ async function _extractGameState(img: HTMLImageElement): Promise<GameState> {
   const heroStack = parseMoney(heroStackText)
   const villStack = parseMoney(villStackText)
 
-  // Hero cards (sequential — card2 depended on card1 previously; now independent)
   const [card1, card2] = await Promise.all([
-    parseCard(img, 'heroCard1'),
-    parseCard(img, 'heroCard2'),
+    parseCard(img, 'heroCard1', yScale),
+    parseCard(img, 'heroCard2', yScale),
   ])
   const holeCards: [Card, Card] | null = card1 && card2 ? [card1, card2] : null
   mark('hero cards')
 
-  // Board cards
   const rawBoard = await Promise.all([
-    parseCard(img, 'board1'),
-    parseCard(img, 'board2'),
-    parseCard(img, 'board3'),
-    parseCard(img, 'board4'),
-    parseCard(img, 'board5'),
+    parseCard(img, 'board1', yScale),
+    parseCard(img, 'board2', yScale),
+    parseCard(img, 'board3', yScale),
+    parseCard(img, 'board4', yScale),
+    parseCard(img, 'board5', yScale),
   ])
   const board = rawBoard.filter((c): c is Card => c !== null)
   mark('board cards')

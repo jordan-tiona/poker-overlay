@@ -92,10 +92,16 @@ ipcMain.handle('capture-ignition', async () => {
     /hold.?em|\$[\d.]+\/\$[\d.]+/i.test(s.name)
   )
 
+  // Record the game window's true content height so the OCR can correct
+  // for the height difference between the window (e.g. 1039px) and the
+  // full-screen capture (1080px). All y-fractions were calibrated against
+  // the window height, so this lets us scale them correctly.
+  const gameWindowHeight = gameWindow?.thumbnail.getSize().height ?? null
+
   // Try window capture first — works if GPU compositing is accessible
   if (gameWindow && hasContent(gameWindow)) {
     console.log(`[capture] window (GPU ok): "${gameWindow.name}"`)
-    return { dataUrl: gameWindow.thumbnail.toDataURL() }
+    return { dataUrl: gameWindow.thumbnail.toDataURL(), windowHeight: gameWindowHeight }
   }
 
   if (gameWindow) {
@@ -105,8 +111,6 @@ ipcMain.handle('capture-ignition', async () => {
   }
 
   // Fall back to screen capture — always bypasses GPU compositing.
-  // The game and overlay are on the same screen; just pick the first
-  // non-black screen that has content.
   const screenCandidates = sources
     .filter(s => s.id.startsWith('screen:') && hasContent(s))
 
@@ -115,8 +119,8 @@ ipcMain.handle('capture-ignition', async () => {
     const bmp = s.thumbnail.toBitmap()
     const ci = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4
     const brightness = bmp[ci] + bmp[ci + 1] + bmp[ci + 2]
-    console.log(`[capture] screen "${s.name}" centre-brightness=${brightness}`)
-    return { dataUrl: s.thumbnail.toDataURL() }
+    console.log(`[capture] screen "${s.name}" brightness=${brightness} windowHeight=${gameWindowHeight}`)
+    return { dataUrl: s.thumbnail.toDataURL(), windowHeight: gameWindowHeight }
   }
 
   return { error: 'No usable capture source', sources: sources.map(s => s.name) }
