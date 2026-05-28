@@ -105,14 +105,24 @@ ipcMain.handle('capture-ignition', async () => {
   }
 
   // Fall back to screen capture — always bypasses GPU compositing.
-  // Try each screen; return the first one that has actual content.
-  const screens = sources.filter(s => s.id.startsWith('screen:'))
-  for (const scr of screens) {
-    if (hasContent(scr)) {
-      console.log(`[capture] screen: "${scr.name}"`)
-      return { dataUrl: scr.thumbnail.toDataURL() }
-    }
-    console.log(`[capture] screen "${scr.name}" is black — skipping`)
+  // Pick the DARKEST non-black screen: the poker table felt is very dark
+  // teal (~sum 165) while desktops/browsers are much brighter (~sum 400+).
+  // This reliably selects the game screen on multi-monitor setups.
+  const screenCandidates = sources
+    .filter(s => s.id.startsWith('screen:'))
+    .map(s => {
+      const { width, height } = s.thumbnail.getSize()
+      const bmp = s.thumbnail.toBitmap()
+      const idx = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4
+      const brightness = bmp[idx] + bmp[idx + 1] + bmp[idx + 2]
+      return { s, brightness }
+    })
+    .filter(({ brightness }) => brightness > 10)   // skip truly black screens
+    .sort((a, b) => a.brightness - b.brightness)   // darkest first
+
+  for (const { s, brightness } of screenCandidates) {
+    console.log(`[capture] screen "${s.name}" centre-brightness=${brightness}`)
+    return { dataUrl: s.thumbnail.toDataURL() }
   }
 
   return { error: 'No usable capture source', sources: sources.map(s => s.name) }
