@@ -47,6 +47,11 @@ function registerHotkeys(): void {
     overlayWindow.webContents.send('click-through-changed', isClickThrough)
   })
 
+  // Open/close DevTools
+  globalShortcut.register('CommandOrControl+Shift+I', () => {
+    overlayWindow?.webContents.openDevTools({ mode: 'detach' })
+  })
+
   // Quit
   globalShortcut.register('CommandOrControl+Shift+Q', () => {
     app.quit()
