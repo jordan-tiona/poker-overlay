@@ -69,60 +69,53 @@ ipcMain.on('set-ignore-mouse-events', (_event, ignore: boolean) => {
   if (!ignore) overlayWindow.focus()
 })
 
-// IPC: capture the Ignition window and return a data URL for OCR.
-// On Linux/VirtualBox, window thumbnails are often 1×1; fall back to a
-// full-screen capture in that case (requires Ignition to be maximised).
+// Returns true if a thumbnail has actual pixel content (not a black frame).
+// GPU-accelerated windows (Ignition uses DirectX) return black thumbnails
+// via window capture — screen capture must be used instead.
+function hasContent(source: Electron.DesktopCapturerSource): boolean {
+  const { width, height } = source.thumbnail.getSize()
+  if (width < 200 || height < 200) return false
+  const bmp = source.thumbnail.toBitmap()
+  // Sample centre pixel — black frame = all zeros
+  const idx = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4
+  return bmp[idx] + bmp[idx + 1] + bmp[idx + 2] > 10
+}
+
 ipcMain.handle('capture-ignition', async () => {
   const sources = await desktopCapturer.getSources({
     types: ['window', 'screen'],
     thumbnailSize: { width: 1920, height: 1080 },
   })
 
-  console.log('[capture] sources:', sources.map(s =>
-    `"${s.name}" ${s.thumbnail.getSize().width}x${s.thumbnail.getSize().height}`
-  ).join(' | '))
-
-  const usable = (s: (typeof sources)[0]) => {
-    const { width, height } = s.thumbnail.getSize()
-    return width > 200 && height > 200
-  }
-
-  // 1. Dedicated game-table window (title contains stake or Hold'em, NOT our overlay)
-  const gameTable = sources.find(s =>
-    /hold.?em|\$[\d.]+\/\$[\d.]+/i.test(s.name) && usable(s)
+  // Identify the game table window (even if its thumbnail is black)
+  const gameWindow = sources.find(s =>
+    /hold.?em|\$[\d.]+\/\$[\d.]+/i.test(s.name)
   )
-  if (gameTable) {
-    console.log(`[capture] game table window: "${gameTable.name}"`)
-    return { dataUrl: gameTable.thumbnail.toDataURL() }
+
+  // Try window capture first — works if GPU compositing is accessible
+  if (gameWindow && hasContent(gameWindow)) {
+    console.log(`[capture] window (GPU ok): "${gameWindow.name}"`)
+    return { dataUrl: gameWindow.thumbnail.toDataURL() }
   }
 
-  // 2. Ignition lobby / client window (excludes our own overlay by name)
-  const ignitionClient = sources.find(s =>
-    /ignition/i.test(s.name) && usable(s)
-  )
-  if (ignitionClient) {
-    console.log(`[capture] Ignition client window: "${ignitionClient.name}"`)
-    return { dataUrl: ignitionClient.thumbnail.toDataURL() }
+  if (gameWindow) {
+    console.log(`[capture] window "${gameWindow.name}" is black (GPU barrier) — using screen`)
+  } else {
+    console.log('[capture] game window not found — using screen')
   }
 
-  // 3. VirtualBox running VM — game may be inside the VM
-  const vbox = sources.find(s =>
-    /virtualbox.*running|running.*virtualbox/i.test(s.name) && usable(s)
-  )
-  if (vbox) {
-    console.log(`[capture] VirtualBox VM window: "${vbox.name}"`)
-    return { dataUrl: vbox.thumbnail.toDataURL() }
+  // Fall back to screen capture — always bypasses GPU compositing.
+  // Try each screen; return the first one that has actual content.
+  const screens = sources.filter(s => s.id.startsWith('screen:'))
+  for (const scr of screens) {
+    if (hasContent(scr)) {
+      console.log(`[capture] screen: "${scr.name}"`)
+      return { dataUrl: scr.thumbnail.toDataURL() }
+    }
+    console.log(`[capture] screen "${scr.name}" is black — skipping`)
   }
 
-  // 4. Try all screen sources in order (covers multi-monitor setups)
-  const screens = sources.filter(s => s.id.startsWith('screen:') && usable(s))
-  for (const screen of screens) {
-    const { width, height } = screen.thumbnail.getSize()
-    console.log(`[capture] screen "${screen.name}" ${width}x${height}`)
-    return { dataUrl: screen.thumbnail.toDataURL() }
-  }
-
-  return { error: 'No capture source found', sources: sources.map(s => s.name) }
+  return { error: 'No usable capture source', sources: sources.map(s => s.name) }
 })
 
 app.whenReady().then(() => {
