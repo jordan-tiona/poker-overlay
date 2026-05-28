@@ -379,6 +379,7 @@ async function _extractGameState(img: HTMLImageElement): Promise<GameState> {
   const mark = (label: string) => {
     if (devPerf()) console.log(`[ocr perf] ${label}: ${(performance.now() - t0).toFixed(0)}ms`)
   }
+  console.log(`[ocr] thumbnail: ${img.naturalWidth}x${img.naturalHeight}`)
 
   // Text OCR runs on a single Tesseract worker — despite Promise.all the
   // calls are serialized internally. Each recognize() call takes ~200–500 ms.

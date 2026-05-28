@@ -69,23 +69,40 @@ ipcMain.on('set-ignore-mouse-events', (_event, ignore: boolean) => {
   if (!ignore) overlayWindow.focus()
 })
 
-// IPC: capture the Ignition window and return a data URL for OCR
+// IPC: capture the Ignition window and return a data URL for OCR.
+// On Linux/VirtualBox, window thumbnails are often 1×1; fall back to a
+// full-screen capture in that case (requires Ignition to be maximised).
 ipcMain.handle('capture-ignition', async () => {
   const sources = await desktopCapturer.getSources({
-    types: ['window'],
+    types: ['window', 'screen'],
     thumbnailSize: { width: 1920, height: 1080 },
   })
 
-  // Find Ignition window — try several known title patterns
-  const ignition = sources.find(s =>
-    /ignition|poker/i.test(s.name)
+  // Try the Ignition window first; accept it only if the thumbnail is real
+  const ignitionWindow = sources.find(s =>
+    /ignition|poker|hold.?em/i.test(s.name)
   )
 
-  if (!ignition) {
-    return { error: 'Ignition window not found', sources: sources.map(s => s.name) }
+  if (ignitionWindow) {
+    const { width, height } = ignitionWindow.thumbnail.getSize()
+    console.log(`[capture] Ignition window thumbnail: ${width}x${height}`)
+    if (width > 200 && height > 200) {
+      return { dataUrl: ignitionWindow.thumbnail.toDataURL() }
+    }
+    console.log('[capture] Window thumbnail too small — falling back to screen')
+  } else {
+    console.log('[capture] Ignition window not found — falling back to screen')
   }
 
-  return { dataUrl: ignition.thumbnail.toDataURL() }
+  // Fall back to primary screen (index 0)
+  const screenSource = sources.find(s => s.id.startsWith('screen:'))
+  if (screenSource) {
+    const { width, height } = screenSource.thumbnail.getSize()
+    console.log(`[capture] Screen capture: ${width}x${height}`)
+    return { dataUrl: screenSource.thumbnail.toDataURL() }
+  }
+
+  return { error: 'No capture source found', sources: sources.map(s => s.name) }
 })
 
 app.whenReady().then(() => {
