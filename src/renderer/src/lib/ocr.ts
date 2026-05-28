@@ -15,33 +15,42 @@ import { createWorker } from 'tesseract.js'
 import type { Card, GameState, Position, Rank, Suit, Street } from '../types/poker'
 import { EMPTY_GAME_STATE } from '../types/poker'
 
-// ── Region definitions (1920×1080 reference frame) ──────────────────────────
-// All values are fractions of the window dimensions so they scale with resize.
+// ── Region definitions ────────────────────────────────────────────────────────
+// Calibrated for a 1920×1032 thumbnail (1920×1080 display, 48px taskbar).
+// All values are fractions of the captured thumbnail size.
+//
+// Ground-truth anchor: D chip at seat 6 measured at pixel (558, 492)
+// → fractions (0.291, 0.477) in the 1920×1032 window.
 
 interface Region {
-  x: number  // fraction of width
-  y: number
+  x: number  // fraction of width  (left edge of crop)
+  y: number  // fraction of height (top edge of crop)
   w: number
   h: number
 }
 
 const REGIONS = {
-  pot:         { x: 0.42, y: 0.41, w: 0.16, h: 0.04 },
-  street:      { x: 0.42, y: 0.36, w: 0.16, h: 0.03 },
-  heroCard1:   { x: 0.435, y: 0.78, w: 0.055, h: 0.09 },
-  heroCard2:   { x: 0.510, y: 0.78, w: 0.055, h: 0.09 },
-  board1:      { x: 0.300, y: 0.52, w: 0.055, h: 0.09 },
-  board2:      { x: 0.370, y: 0.52, w: 0.055, h: 0.09 },
-  board3:      { x: 0.440, y: 0.52, w: 0.055, h: 0.09 },
-  board4:      { x: 0.510, y: 0.52, w: 0.055, h: 0.09 },
-  board5:      { x: 0.580, y: 0.52, w: 0.055, h: 0.09 },
-  heroStack:   { x: 0.42, y: 0.87, w: 0.16, h: 0.03 },
-  villStack:   { x: 0.42, y: 0.12, w: 0.16, h: 0.03 },
+  // "Total pot: $X.XX" text — horizontally centred above board
+  pot:         { x: 0.340, y: 0.214, w: 0.150, h: 0.040 },
+  street:      { x: 0.340, y: 0.198, w: 0.150, h: 0.028 },
 
-  // Action buttons (bottom of screen) — used to detect facingBet + bet size
-  // "Call X.XX" text appears in the middle button when facing a bet;
-  // "Check" appears there when not facing one.
-  actionCall:  { x: 0.460, y: 0.905, w: 0.140, h: 0.040 },
+  // Hero hole cards (bottom-centre of table, face-up)
+  heroCard1:   { x: 0.342, y: 0.468, w: 0.052, h: 0.090 },
+  heroCard2:   { x: 0.393, y: 0.468, w: 0.052, h: 0.090 },
+
+  // Community cards (board) — 5 slots left-to-right
+  board1:      { x: 0.260, y: 0.278, w: 0.050, h: 0.095 },
+  board2:      { x: 0.311, y: 0.278, w: 0.050, h: 0.095 },
+  board3:      { x: 0.352, y: 0.278, w: 0.050, h: 0.095 },
+  board4:      { x: 0.402, y: 0.278, w: 0.050, h: 0.095 },
+  board5:      { x: 0.451, y: 0.278, w: 0.050, h: 0.095 },
+
+  // Stack amounts
+  heroStack:   { x: 0.350, y: 0.548, w: 0.140, h: 0.034 },
+  villStack:   { x: 0.350, y: 0.130, w: 0.140, h: 0.030 },
+
+  // Action buttons — "Call $X.XX" or "Check" label on the middle button
+  actionCall:  { x: 0.418, y: 0.712, w: 0.140, h: 0.040 },
 } satisfies Record<string, Region>
 
 // ── Dealer-button (D-chip) seat regions ──────────────────────────────────────
@@ -76,16 +85,21 @@ const DEALER_CHIP_SEATS_6MAX: Region[] = [
 //   2 = left                   7 = lower-right
 //   3 = upper-left             8 = bottom-right
 //   4 = top-left
+// Regions are centred on the estimated D-chip position.
+// Ground truth: chip at seat 6 (1 clockwise from hero) measured at
+// pixel (558, 492) in the 1920×1032 window → centre fraction (0.291, 0.477).
+// All other positions derived from seat-chip locations using the same
+// 44% x / 29% y offset toward table centre (0.378, 0.331).
 const DEALER_CHIP_SEATS_9MAX: Region[] = [
-  { x: 0.440, y: 0.720, w: 0.055, h: 0.040 },  // 0 hero
-  { x: 0.345, y: 0.620, w: 0.055, h: 0.040 },  // 1 bottom-left  (seat 7 area, both screenshots)
-  { x: 0.180, y: 0.490, w: 0.055, h: 0.040 },  // 2 left
-  { x: 0.165, y: 0.315, w: 0.055, h: 0.040 },  // 3 upper-left
-  { x: 0.350, y: 0.235, w: 0.055, h: 0.040 },  // 4 top-left
-  { x: 0.510, y: 0.235, w: 0.055, h: 0.040 },  // 5 top-right
-  { x: 0.685, y: 0.315, w: 0.055, h: 0.040 },  // 6 right
-  { x: 0.685, y: 0.490, w: 0.055, h: 0.040 },  // 7 lower-right
-  { x: 0.540, y: 0.620, w: 0.055, h: 0.040 },  // 8 bottom-right
+  { x: 0.333, y: 0.469, w: 0.055, h: 0.040 },  // 0 hero        centre≈(0.360,0.489)
+  { x: 0.264, y: 0.457, w: 0.055, h: 0.040 },  // 1 bottom-left centre≈(0.291,0.477) ✓measured
+  { x: 0.206, y: 0.388, w: 0.055, h: 0.040 },  // 2 left        centre≈(0.233,0.408)
+  { x: 0.204, y: 0.241, w: 0.055, h: 0.040 },  // 3 upper-left  centre≈(0.231,0.261)
+  { x: 0.305, y: 0.182, w: 0.055, h: 0.040 },  // 4 top-left    centre≈(0.332,0.202)
+  { x: 0.380, y: 0.182, w: 0.055, h: 0.040 },  // 5 top-right   centre≈(0.407,0.202)
+  { x: 0.458, y: 0.241, w: 0.055, h: 0.040 },  // 6 right       centre≈(0.485,0.261)
+  { x: 0.460, y: 0.388, w: 0.055, h: 0.040 },  // 7 lower-right centre≈(0.487,0.408)
+  { x: 0.401, y: 0.457, w: 0.055, h: 0.040 },  // 8 bottom-right centre≈(0.428,0.477)
 ]
 
 // Seat index → hero position (D is X seats clockwise from hero)
