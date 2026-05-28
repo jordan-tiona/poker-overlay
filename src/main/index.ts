@@ -1,11 +1,11 @@
-import { app, BrowserWindow, ipcMain, desktopCapturer, screen, globalShortcut } from 'electron'
+import { app, BrowserWindow, ipcMain, desktopCapturer, screen as electronScreen, globalShortcut } from 'electron'
 import { join } from 'path'
 
 let overlayWindow: BrowserWindow | null = null
 let isClickThrough = true
 
 function createOverlayWindow(): void {
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize
+  const { width, height } = electronScreen.getPrimaryDisplay().workAreaSize
 
   overlayWindow = new BrowserWindow({
     width,
@@ -105,23 +105,31 @@ ipcMain.handle('capture-ignition', async () => {
   }
 
   // Fall back to screen capture — always bypasses GPU compositing.
-  // Pick the DARKEST non-black screen: the poker table felt is very dark
-  // teal (~sum 165) while desktops/browsers are much brighter (~sum 400+).
-  // This reliably selects the game screen on multi-monitor setups.
+  // Prefer the screen that the overlay is NOT on: the overlay and game
+  // are typically on different monitors, and we know the overlay's display.
+  const overlayBounds = overlayWindow?.getBounds() ?? { x: 0, y: 0 }
+  const overlayDisplay = electronScreen.getDisplayNearestPoint(overlayBounds)
+
   const screenCandidates = sources
-    .filter(s => s.id.startsWith('screen:'))
+    .filter(s => s.id.startsWith('screen:') && hasContent(s))
     .map(s => {
+      // Match screen source index to display order so we can deprioritise
+      // the overlay's screen. Source IDs are "screen:N:0" where N is index.
+      const idx = parseInt(s.id.split(':')[1])
+      const displays = electronScreen.getAllDisplays()
+      const display = displays[idx]
+      const isOverlayScreen = display?.id === overlayDisplay.id
       const { width, height } = s.thumbnail.getSize()
       const bmp = s.thumbnail.toBitmap()
-      const idx = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4
-      const brightness = bmp[idx] + bmp[idx + 1] + bmp[idx + 2]
-      return { s, brightness }
+      const ci = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4
+      const brightness = bmp[ci] + bmp[ci + 1] + bmp[ci + 2]
+      return { s, brightness, isOverlayScreen }
     })
-    .filter(({ brightness }) => brightness > 10)   // skip truly black screens
-    .sort((a, b) => a.brightness - b.brightness)   // darkest first
+    // Game screen first; break ties by darkest (poker table is very dark)
+    .sort((a, b) => Number(a.isOverlayScreen) - Number(b.isOverlayScreen) || a.brightness - b.brightness)
 
-  for (const { s, brightness } of screenCandidates) {
-    console.log(`[capture] screen "${s.name}" centre-brightness=${brightness}`)
+  for (const { s, brightness, isOverlayScreen } of screenCandidates) {
+    console.log(`[capture] screen "${s.name}" brightness=${brightness} overlayScreen=${isOverlayScreen}`)
     return { dataUrl: s.thumbnail.toDataURL() }
   }
 
