@@ -12,7 +12,7 @@
  */
 
 import { createWorker } from 'tesseract.js'
-import type { Card, GameState, Rank, Suit, Street } from '../types/poker'
+import type { Card, GameState, Position, Rank, Suit, Street } from '../types/poker'
 import { EMPTY_GAME_STATE } from '../types/poker'
 
 // ── Region definitions (1920×1080 reference frame) ──────────────────────────
@@ -37,7 +37,56 @@ const REGIONS = {
   board5:      { x: 0.580, y: 0.52, w: 0.055, h: 0.09 },
   heroStack:   { x: 0.42, y: 0.87, w: 0.16, h: 0.03 },
   villStack:   { x: 0.42, y: 0.12, w: 0.16, h: 0.03 },
+
+  // Action buttons (bottom of screen) — used to detect facingBet + bet size
+  // "Call X.XX" text appears in the middle button when facing a bet;
+  // "Check" appears there when not facing one.
+  actionCall:  { x: 0.460, y: 0.905, w: 0.140, h: 0.040 },
 } satisfies Record<string, Region>
+
+// ── Dealer-button (D-chip) seat regions (1920×1080 reference) ────────────────
+//
+// Ignition's 6-max oval table has 6 seat positions. Hero is always at the
+// bottom-center (seat index 0). Seats are numbered clockwise:
+//   0 = hero (bottom)     3 = top-right
+//   1 = right             4 = top-left
+//   2 = upper-right       5 = left
+//
+// The D chip is a small gold/yellow circle (~30 px) that moves between these
+// positions. We sample a ~40×30 px patch at each location and look for the
+// distinctive gold colour (high R+G, low B).
+//
+// ⚠️  These coordinates are approximate — run with DEV_LOG_DEALER=true in the
+//     console to print RGB samples from each region and tune x/y if needed.
+//
+const DEALER_CHIP_SEATS: Region[] = [
+  { x: 0.456, y: 0.748, w: 0.040, h: 0.028 },  // 0 hero
+  { x: 0.705, y: 0.660, w: 0.040, h: 0.028 },  // 1 right
+  { x: 0.785, y: 0.450, w: 0.040, h: 0.028 },  // 2 upper-right
+  { x: 0.636, y: 0.305, w: 0.040, h: 0.028 },  // 3 top-right
+  { x: 0.368, y: 0.305, w: 0.040, h: 0.028 },  // 4 top-left
+  { x: 0.222, y: 0.450, w: 0.040, h: 0.028 },  // 5 left
+  { x: 0.265, y: 0.660, w: 0.040, h: 0.028 },  // 6 lower-left (7-handed overflow)
+]
+
+// Seat index → hero's position for a 6-max table.
+// Clockwise seat layout means:
+//   D at seat 0 (hero)         → hero is BTN
+//   D at seat 1 (right)        → hero is CO   (BTN is one seat to the right)
+//   D at seat 2 (upper-right)  → hero is HJ
+//   D at seat 3 (top-right)    → hero is LJ
+//   D at seat 4 (top-left)     → hero is BB
+//   D at seat 5 (left)         → hero is SB
+const SEAT_TO_POSITION_6MAX: Array<Position | null> = [
+  'BTN', 'CO', 'HJ', 'LJ', 'BB', 'SB', null,
+]
+
+// Seat positions that opened preflop (for BB defend chart), indexed same as above
+// If D is at seat X, the BTN is that seat, opener could be any of LJ/HJ/CO/BTN/SB
+// We default to guessing the BTN opened (most common single-raise spot)
+const SEAT_TO_OPENER_6MAX: Array<Position | null> = [
+  null, 'BTN', 'CO', 'HJ', 'CO', 'BTN', null,
+]
 
 // ── Tesseract worker (singleton) ─────────────────────────────────────────────
 
@@ -238,31 +287,109 @@ function alternateRedSuits(cards: Card[]): Card[] {
   })
 }
 
+// ── Dealer button (D chip) detection ────────────────────────────────────────
+
+/**
+ * Returns the index into DEALER_CHIP_SEATS of the seat that currently has the
+ * dealer button, or -1 if none found.
+ *
+ * Detection heuristic: the D chip in Ignition is gold/yellow — high red,
+ * high green (≥ red × 0.65), low blue (< red × 0.55).  We sample several
+ * pixels in each region and count how many match.
+ */
+function findDealerChipSeat(img: HTMLImageElement): number {
+  let bestSeat = -1
+  let bestScore = 0
+
+  for (let i = 0; i < DEALER_CHIP_SEATS.length; i++) {
+    const canvas = cropRegion(img, DEALER_CHIP_SEATS[i])
+    const ctx = canvas.getContext('2d')!
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height)
+
+    let goldPixels = 0
+    for (let p = 0; p < data.length; p += 4) {
+      const r = data[p], g = data[p + 1], b = data[p + 2]
+      if (r > 160 && g > r * 0.60 && b < r * 0.55 && r > 100) goldPixels++
+    }
+
+    // Need ≥15% of pixels to be gold to count as a chip
+    const pixelCount = data.length / 4
+    const score = goldPixels / pixelCount
+    if (score > 0.15 && score > bestScore) {
+      bestScore = score
+      bestSeat = i
+    }
+  }
+
+  return bestSeat
+}
+
+/**
+ * Infer hero's table position from which seat has the dealer button.
+ * Also returns a best-guess openerPosition for BB-defend situations.
+ */
+function inferPositionFromDealer(img: HTMLImageElement): {
+  heroPosition: Position | null
+  openerPosition: Position | null
+} {
+  const seat = findDealerChipSeat(img)
+  if (seat === -1) return { heroPosition: null, openerPosition: null }
+
+  const heroPosition = SEAT_TO_POSITION_6MAX[seat] ?? null
+  const openerPosition = heroPosition === 'BB'
+    ? (SEAT_TO_OPENER_6MAX[seat] ?? null)
+    : null
+
+  return { heroPosition, openerPosition }
+}
+
+// ── Action-button region OCR (detect facing-bet + bet size) ──────────────────
+
+/**
+ * Reads the middle action button ("Call X.XX" / "Check").
+ * Returns { facingBet, facingBetSizeBB }.
+ */
+async function detectActionState(img: HTMLImageElement): Promise<{
+  facingBet: boolean
+  facingBetSizeBB: number
+}> {
+  const text = await ocrCanvas(cropRegion(img, REGIONS.actionCall))
+  const lower = text.toLowerCase()
+
+  if (!lower.includes('call')) return { facingBet: false, facingBetSizeBB: 0 }
+
+  // Extract the dollar/BB amount after "Call"
+  const match = text.match(/call\s*\$?([\d.,]+)/i)
+  const facingBetSizeBB = match ? parseMoney(match[1]) : 0
+  return { facingBet: true, facingBetSizeBB }
+}
+
+// ── Main OCR entry point (updated) ───────────────────────────────────────────
+
 async function _extractGameState(img: HTMLImageElement): Promise<GameState> {
-  // Run OCR on text regions in parallel
-  const [potText, heroStackText, villStackText] = await Promise.all([
+  // Run OCR on text regions + action state + position in parallel
+  const [potText, heroStackText, villStackText, actionState] = await Promise.all([
     ocrCanvas(cropRegion(img, REGIONS.pot)),
     ocrCanvas(cropRegion(img, REGIONS.heroStack)),
     ocrCanvas(cropRegion(img, REGIONS.villStack)),
+    detectActionState(img),
   ])
+
+  // Dealer-chip detection is pixel-only (sync-enough inside the same tick)
+  const { heroPosition, openerPosition: detectedOpener } = inferPositionFromDealer(img)
 
   const potBB = parseMoney(potText)
   const heroStack = parseMoney(heroStackText)
   const villStack = parseMoney(villStackText)
 
   // Parse hole cards
-  // If OCR doesn't return a suit symbol, pixel sampling gives us red/black.
-  // When both cards are red we can't tell which is h and which is d from colour alone —
-  // default card1=h, card2=d. If card1 has an OCR suit, don't override card2.
   const card1 = await parseCard(img, 'heroCard1')
   const card1IsRed = card1?.suit === 'h' || card1?.suit === 'd'
   const card2Hint: Suit | undefined = card1IsRed && !suitKnownFromOCR(card1) ? 'd' : undefined
   const card2 = await parseCard(img, 'heroCard2', card2Hint)
   const holeCards: [Card, Card] | null = card1 && card2 ? [card1, card2] : null
 
-  // Parse board cards — pass pixel-colour hints to distinguish black suits
-  // We can't reliably separate s/c or h/d from colour, so we just ensure
-  // red cards don't all become the same suit
+  // Parse board cards
   const rawBoard = await Promise.all([
     parseCard(img, 'board1'),
     parseCard(img, 'board2'),
@@ -277,17 +404,21 @@ async function _extractGameState(img: HTMLImageElement): Promise<GameState> {
     board.length === 3 ? 'flop' :
     board.length === 4 ? 'turn' : 'river'
 
+  // For BB facing a bet, prefer the detected opener; otherwise null
+  const openerPosition =
+    heroPosition === 'BB' && actionState.facingBet ? detectedOpener : null
+
   return {
     street,
     holeCards,
     board,
-    heroPosition: null,       // position requires more complex detection
+    heroPosition,
     potBB,
     stacksBB: { hero: heroStack, villain: villStack },
-    facingBet: false,         // TODO: detect bet box state
-    facingBetSizeBB: 0,
+    facingBet: actionState.facingBet,
+    facingBetSizeBB: actionState.facingBetSizeBB,
     villainsActive: 1,
-    openerPosition: null,     // set manually via UI
-    confidence: holeCards ? 'high' : 'low',
+    openerPosition,
+    confidence: holeCards && heroPosition ? 'high' : holeCards ? 'low' : 'low',
   }
 }

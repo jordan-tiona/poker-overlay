@@ -53,6 +53,17 @@ function registerHotkeys(): void {
   })
 }
 
+// IPC: renderer tells us when mouse enters/leaves interactive panel area.
+// We also toggle focusability so that <select> dropdowns and inputs work
+// when the mouse is over the panel, without stealing focus from the game
+// window the rest of the time.
+ipcMain.on('set-ignore-mouse-events', (_event, ignore: boolean) => {
+  if (!overlayWindow) return
+  overlayWindow.setIgnoreMouseEvents(ignore, { forward: true })
+  overlayWindow.setFocusable(!ignore)
+  if (!ignore) overlayWindow.focus()
+})
+
 // IPC: capture the Ignition window and return a data URL for OCR
 ipcMain.handle('capture-ignition', async () => {
   const sources = await desktopCapturer.getSources({

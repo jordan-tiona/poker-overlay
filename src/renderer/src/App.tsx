@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { SuggestionPanel } from './components/SuggestionPanel'
 import { StatusBar } from './components/StatusBar'
 import { useCapture } from './hooks/useCapture'
@@ -12,8 +12,13 @@ export function App() {
 
   const handleStateChange = useCallback((newState: GameState) => {
     setGameState(prev => {
-      const merged = { ...prev, ...newState }
-      // Re-analyze whenever state changes
+      const merged = {
+        ...prev,
+        ...newState,
+        // Never let OCR overwrite fields it can't detect — preserve user-set values
+        heroPosition: newState.heroPosition ?? prev.heroPosition,
+        openerPosition: newState.openerPosition ?? prev.openerPosition,
+      }
       analyze(merged)
       return merged
     })
@@ -27,18 +32,28 @@ export function App() {
     })
   }, [analyze])
 
-  const { status, errorMsg, isClickThrough } = useCapture(handleStateChange)
+  const { status, errorMsg } = useCapture(handleStateChange)
+
+  // Hover-based click-through: panel is interactive when mouse is over it,
+  // click-through otherwise — no hotkey toggle needed.
+  const layoutRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      const el = document.elementFromPoint(e.clientX, e.clientY)
+      const overPanel = !!el && el !== document.body && el !== document.documentElement
+      window.electronAPI.setIgnoreMouseEvents(!overPanel)
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    // Ensure click-through when component unmounts
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.electronAPI.setIgnoreMouseEvents(true)
+    }
+  }, [])
 
   return (
     <div style={styles.root}>
-      {/* Show a subtle "locked" indicator when click-through is on */}
-      {isClickThrough && (
-        <div style={styles.lockedBadge} title="Ctrl+Shift+P to interact">
-          🔒
-        </div>
-      )}
-
-      <div style={styles.layout}>
+      <div ref={layoutRef} style={styles.layout}>
         <SuggestionPanel
           suggestion={suggestion}
           explanation={explanation}
@@ -72,14 +87,5 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: 8,
     margin: '16px 16px 0 0',
-  },
-  lockedBadge: {
-    position: 'fixed',
-    top: 8,
-    left: 8,
-    fontSize: 18,
-    opacity: 0.4,
-    userSelect: 'none',
-    pointerEvents: 'none',
   },
 }

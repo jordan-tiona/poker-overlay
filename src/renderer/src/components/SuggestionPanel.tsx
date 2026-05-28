@@ -81,13 +81,47 @@ export function SuggestionPanel({ suggestion, explanation, loading, error, gameS
           <span>{explanation}{loading && <span style={styles.cursor}>▋</span>}</span>
         )}
         {!error && !loading && !explanation && !suggestion && (
-          <span style={styles.hint}>Set your position and hole cards to get a suggestion.</span>
+          <NoSuggestionHint gameState={gameState} />
         )}
       </div>
-
-      <div style={styles.hotkey}>Ctrl+Shift+P — toggle mouse interaction</div>
     </div>
   )
+}
+
+// ── No-suggestion hint (replaces generic fallback text) ─────────────────────
+
+function NoSuggestionHint({ gameState }: { gameState: GameState }) {
+  const missingPosition = !gameState.heroPosition
+  const missingCards = !gameState.holeCards
+  const isPostflop = gameState.street !== 'preflop'
+  const needsOpener =
+    gameState.heroPosition === 'BB' && gameState.facingBet && !gameState.openerPosition
+
+  if (isPostflop) {
+    return <span style={styles.hint}>Postflop lookup coming soon.</span>
+  }
+  if (missingPosition && missingCards) {
+    return <span style={styles.hint}>Waiting for cards and position…</span>
+  }
+  if (missingPosition) {
+    return (
+      <span style={styles.hint}>
+        Position not detected — dealer chip not found.{' '}
+        <span style={styles.hintAction}>Set it manually above.</span>
+      </span>
+    )
+  }
+  if (missingCards) {
+    return <span style={styles.hint}>Waiting for hole cards…</span>
+  }
+  if (needsOpener) {
+    return (
+      <span style={styles.hint}>
+        You're BB facing a bet — set the <strong style={{ color: '#93c5fd' }}>Opener</strong> above.
+      </span>
+    )
+  }
+  return <span style={styles.hint}>No GTO entry for this spot.</span>
 }
 
 // ── Manual override controls ─────────────────────────────────────────────────
@@ -102,12 +136,18 @@ const OPENER_POSITIONS = ['UTG', 'UTG+1', 'UTG+2', 'LJ', 'HJ', 'CO', 'BTN', 'SB'
 
 function ManualControls({ gameState, onManualEdit }: ControlsProps) {
   const isBB = gameState.heroPosition === 'BB'
+  const positionIsAuto = gameState.heroPosition !== null && gameState.confidence !== 'manual'
 
   return (
     <div style={styles.controls}>
-      <label style={styles.controlLabel}>Position</label>
+      <label style={styles.controlLabel}>
+        Position{positionIsAuto && <span style={styles.autoBadge}> ⚡auto</span>}
+      </label>
       <select
-        style={styles.select}
+        style={{
+          ...styles.select,
+          borderColor: positionIsAuto ? 'rgba(34,197,94,0.6)' : 'rgba(99,120,180,0.4)',
+        }}
         value={gameState.heroPosition ?? ''}
         onChange={e => onManualEdit({ heroPosition: e.target.value as GameState['heroPosition'] })}
       >
@@ -193,7 +233,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 0',
     borderBottom: '1px solid rgba(99,120,180,0.2)',
   },
-  controlLabel: { color: '#94a3b8', fontSize: 11 },
+  controlLabel: { color: '#94a3b8', fontSize: 11, display: 'flex', alignItems: 'center', gap: 2 },
+  autoBadge: { color: '#22c55e', fontSize: 9, fontWeight: 600, letterSpacing: 0.3 },
   select: {
     background: 'rgba(30,40,60,0.9)',
     border: '1px solid rgba(99,120,180,0.4)',
@@ -253,12 +294,6 @@ const styles: Record<string, React.CSSProperties> = {
   loading: { color: '#64748b', fontStyle: 'italic' },
   error: { color: '#f87171' },
   hint: { color: '#475569', fontStyle: 'italic' },
+  hintAction: { color: '#93c5fd', fontStyle: 'normal' },
   cursor: { animation: 'blink 1s step-end infinite' },
-
-  hotkey: {
-    marginTop: 10,
-    fontSize: 10,
-    color: '#334155',
-    textAlign: 'center' as const,
-  },
 }

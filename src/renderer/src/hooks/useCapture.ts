@@ -7,6 +7,7 @@ declare global {
   interface Window {
     electronAPI: {
       captureIgnition: () => Promise<{ dataUrl?: string; error?: string; sources?: string[] }>
+      setIgnoreMouseEvents: (ignore: boolean) => void
       onClickThroughChanged: (cb: (isClickThrough: boolean) => void) => () => void
     }
   }
