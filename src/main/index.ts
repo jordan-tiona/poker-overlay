@@ -78,30 +78,48 @@ ipcMain.handle('capture-ignition', async () => {
     thumbnailSize: { width: 1920, height: 1080 },
   })
 
-  // Try the Ignition window first; accept it only if the thumbnail is real
-  const ignitionWindow = sources.find(s =>
-    /ignition|poker|hold.?em/i.test(s.name)
-  )
+  console.log('[capture] sources:', sources.map(s =>
+    `"${s.name}" ${s.thumbnail.getSize().width}x${s.thumbnail.getSize().height}`
+  ).join(' | '))
 
-  console.log('[capture] sources:', sources.map(s => `${s.id.slice(0,10)} "${s.name}" ${s.thumbnail.getSize().width}x${s.thumbnail.getSize().height}`).join(' | '))
-
-  if (ignitionWindow) {
-    const { width, height } = ignitionWindow.thumbnail.getSize()
-    console.log(`[capture] Using window "${ignitionWindow.name}" ${width}x${height}`)
-    if (width > 200 && height > 200) {
-      return { dataUrl: ignitionWindow.thumbnail.toDataURL() }
-    }
-    console.log('[capture] Window thumbnail too small — falling back to screen')
-  } else {
-    console.log('[capture] Ignition window not found — falling back to screen')
+  const usable = (s: (typeof sources)[0]) => {
+    const { width, height } = s.thumbnail.getSize()
+    return width > 200 && height > 200
   }
 
-  // Fall back to primary screen (index 0)
-  const screenSource = sources.find(s => s.id.startsWith('screen:'))
-  if (screenSource) {
-    const { width, height } = screenSource.thumbnail.getSize()
-    console.log(`[capture] Screen capture: ${width}x${height}`)
-    return { dataUrl: screenSource.thumbnail.toDataURL() }
+  // 1. Dedicated game-table window (title contains stake or Hold'em, NOT our overlay)
+  const gameTable = sources.find(s =>
+    /hold.?em|\$[\d.]+\/\$[\d.]+/i.test(s.name) && usable(s)
+  )
+  if (gameTable) {
+    console.log(`[capture] game table window: "${gameTable.name}"`)
+    return { dataUrl: gameTable.thumbnail.toDataURL() }
+  }
+
+  // 2. Ignition lobby / client window (excludes our own overlay by name)
+  const ignitionClient = sources.find(s =>
+    /ignition/i.test(s.name) && usable(s)
+  )
+  if (ignitionClient) {
+    console.log(`[capture] Ignition client window: "${ignitionClient.name}"`)
+    return { dataUrl: ignitionClient.thumbnail.toDataURL() }
+  }
+
+  // 3. VirtualBox running VM — game may be inside the VM
+  const vbox = sources.find(s =>
+    /virtualbox.*running|running.*virtualbox/i.test(s.name) && usable(s)
+  )
+  if (vbox) {
+    console.log(`[capture] VirtualBox VM window: "${vbox.name}"`)
+    return { dataUrl: vbox.thumbnail.toDataURL() }
+  }
+
+  // 4. Try all screen sources in order (covers multi-monitor setups)
+  const screens = sources.filter(s => s.id.startsWith('screen:') && usable(s))
+  for (const screen of screens) {
+    const { width, height } = screen.thumbnail.getSize()
+    console.log(`[capture] screen "${screen.name}" ${width}x${height}`)
+    return { dataUrl: screen.thumbnail.toDataURL() }
   }
 
   return { error: 'No capture source found', sources: sources.map(s => s.name) }
